@@ -1,0 +1,19 @@
+# Generated datasets
+datasets/
+coco_hierarchy_north/
+yolo_hierarchy_north/
+
+# Mask database
+mask_database/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
