@@ -132,8 +132,32 @@ def generate_hue_augmentation_params(count, hue_range, sat_range, val_range):
     return params
 
 
-def preprocess_raster(raster_data):
-    """Convert raster data to uint8 RGB format."""
+def preprocess_raster(raster_data, rasterio_src=None):
+    """Convert raster data to uint8 RGB format.
+
+    Args:
+        raster_data: Numpy array from raster.read() with shape (bands, H, W)
+        rasterio_src: Optional rasterio dataset for palette/colormap lookup
+    """
+    # Handle paletted/indexed-color TIFs (single band with color lookup table)
+    if (rasterio_src is not None
+            and raster_data.shape[0] == 1
+            and hasattr(rasterio_src, 'colorinterp')
+            and rasterio_src.colorinterp[0].name == 'palette'):
+        try:
+            cmap = rasterio_src.colormap(1)
+            if cmap:
+                indices = raster_data[0]  # (H, W) of palette indices
+                h, w = indices.shape
+                rgb = np.zeros((h, w, 3), dtype=np.uint8)
+                for idx, rgba in cmap.items():
+                    mask = indices == idx
+                    if mask.any():
+                        rgb[mask] = rgba[:3]  # RGB, drop alpha
+                return rgb
+        except Exception as e:
+            print(f"  Warning: Failed to apply color palette: {e}")
+
     full_rgb = np.transpose(raster_data, (1, 2, 0))
 
     # Normalize to 0-255 range
@@ -804,3 +828,63 @@ def generate_random_angles(count, angle_range):
     """Generate random rotation angles within the specified range."""
     min_angle, max_angle = angle_range
     return [random.uniform(min_angle, max_angle) for _ in range(count)]
+
+
+def resize_image_and_annotations_to_target(image, annotations, target_width, target_height):
+    """Resize image to exact target dimensions and scale annotations accordingly.
+
+    Args:
+        image: Input image (numpy array)
+        annotations: List of annotation dicts with 'segmentation', 'bbox', 'area'
+        target_width: Target width in pixels
+        target_height: Target height in pixels
+
+    Returns:
+        (resized_image, resized_annotations)
+    """
+    from .annotations import calculate_bbox_from_segmentation, calculate_area_from_segmentation
+
+    height, width = image.shape[:2]
+
+    if width == target_width and height == target_height:
+        return image, annotations
+
+    scale_x = target_width / width
+    scale_y = target_height / height
+
+    resized_image = cv2.resize(image, (target_width, target_height), interpolation=cv2.INTER_LINEAR)
+
+    resized_annotations = []
+    for ann in annotations:
+        seg_list = ann['segmentation']
+        new_seg_list = []
+
+        for seg in seg_list:
+            if len(seg) < 6:
+                continue
+            scaled_seg = []
+            for i in range(0, len(seg), 2):
+                x = seg[i] * scale_x
+                y = seg[i + 1] * scale_y
+                x = max(0, min(x, target_width - 1))
+                y = max(0, min(y, target_height - 1))
+                scaled_seg.extend([x, y])
+            if len(scaled_seg) >= 6:
+                new_seg_list.append(scaled_seg)
+
+        if not new_seg_list:
+            continue
+
+        bbox = calculate_bbox_from_segmentation(new_seg_list[0])
+        area = calculate_area_from_segmentation(new_seg_list[0])
+
+        if area <= 0:
+            continue
+
+        resized_ann = ann.copy()
+        resized_ann['segmentation'] = new_seg_list
+        resized_ann['bbox'] = bbox
+        resized_ann['area'] = area
+        resized_annotations.append(resized_ann)
+
+    return resized_image, resized_annotations

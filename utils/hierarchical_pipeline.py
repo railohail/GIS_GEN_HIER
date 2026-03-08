@@ -51,6 +51,7 @@ from .image import (
     generate_hue_augmentation_params,
     rotate_image_and_annotations,
     generate_random_angles,
+    resize_image_and_annotations_to_target,
 )
 from .annotations import (
     polygon_to_coco_segmentation,
@@ -210,7 +211,8 @@ def save_hierarchical_image_and_annotations(
     viz_dir: Optional[str] = None,
     categories_l0: Optional[List[Dict]] = None,
     categories_l1: Optional[List[Dict]] = None,
-    create_viz: bool = False
+    create_viz: bool = False,
+    target_size: Optional[List[int]] = None
 ) -> Tuple[int, int, int]:
     """
     Save image and buffer hierarchical annotations, optionally creating visualization.
@@ -228,10 +230,22 @@ def save_hierarchical_image_and_annotations(
         categories_l0: County categories for visualization (optional)
         categories_l1: Township categories for visualization (optional)
         create_viz: Whether to create visualization
+        target_size: Optional [width, height] to resize output to fixed dimensions
 
     Returns:
         Tuple of (1 if success else 0, num_l0_annotations, num_l1_annotations)
     """
+    # Resize to target size if specified (before grayscale so dimensions are final)
+    if target_size:
+        target_w, target_h = target_size
+        # Resize image once, scale both annotation sets from original dimensions
+        _, annotations_l0 = resize_image_and_annotations_to_target(
+            image, annotations_l0, target_w, target_h
+        )
+        image, annotations_l1 = resize_image_and_annotations_to_target(
+            image, annotations_l1, target_w, target_h
+        )
+
     # Apply grayscale if enabled
     final_image = convert_to_grayscale(image) if grayscale_enabled else image
 
@@ -629,6 +643,10 @@ def process_hierarchical_separate_districts(
     grayscale_enabled = config.get('output', {}).get('grayscale', False)
     create_viz = config.get('visualization', {}).get('create_masks', True)
     create_hier_overlay = config.get('visualization', {}).get('create_hierarchical_overlay', True)
+    target_size = config.get('output', {}).get('target_size', None)
+
+    if target_size:
+        print(f"  Target output size: {target_size[0]}x{target_size[1]}")
 
     # Process each district
     mapdata_base_dir = config.get('mapdata_base_dir', 'datasets/MAPDATA')
@@ -728,7 +746,7 @@ def process_hierarchical_separate_districts(
 
                 # Preprocess raster
                 raster_data = raster.read()
-                image_data = preprocess_raster(raster_data)
+                image_data = preprocess_raster(raster_data, rasterio_src=raster)
 
                 if image_data is None:
                     raster.close()
@@ -904,7 +922,8 @@ def process_hierarchical_separate_districts(
                             viz_dir=viz_dir,
                             categories_l0=categories_l0,
                             categories_l1=categories_l1,
-                            create_viz=create_viz and create_hier_overlay
+                            create_viz=create_viz and create_hier_overlay,
+                            target_size=target_size
                         )
                         total_images += imgs
                         total_l0_annotations += l0_count
@@ -944,7 +963,8 @@ def process_hierarchical_separate_districts(
                                     viz_dir=viz_dir,
                                     categories_l0=categories_l0,
                                     categories_l1=categories_l1,
-                                    create_viz=create_viz and create_hier_overlay
+                                    create_viz=create_viz and create_hier_overlay,
+                                    target_size=target_size
                                 )
                                 total_images += imgs
                                 total_l0_annotations += l0_count
@@ -974,7 +994,8 @@ def process_hierarchical_separate_districts(
                                             viz_dir=viz_dir,
                                             categories_l0=categories_l0,
                                             categories_l1=categories_l1,
-                                            create_viz=create_viz and create_hier_overlay
+                                            create_viz=create_viz and create_hier_overlay,
+                                            target_size=target_size
                                         )
                                         total_images += imgs
                                         total_l0_annotations += l0_count
@@ -1006,7 +1027,8 @@ def process_hierarchical_separate_districts(
                                     viz_dir=viz_dir,
                                     categories_l0=categories_l0,
                                     categories_l1=categories_l1,
-                                    create_viz=create_viz and create_hier_overlay
+                                    create_viz=create_viz and create_hier_overlay,
+                                    target_size=target_size
                                 )
                                 total_images += imgs
                                 total_l0_annotations += l0_count
@@ -1257,6 +1279,7 @@ def process_hierarchical_combined_maps(
     grayscale_enabled = config.get('output', {}).get('grayscale', False)
     create_viz = config.get('visualization', {}).get('create_masks', True)
     create_hier_overlay = config.get('visualization', {}).get('create_hierarchical_overlay', True)
+    target_size = config.get('output', {}).get('target_size', None)
 
     # Collect all TIF files
     mapdata_base_dir = config.get('mapdata_base_dir', 'datasets/MAPDATA')
@@ -1439,7 +1462,8 @@ def process_hierarchical_combined_maps(
                             viz_dir=viz_dir,
                             categories_l0=categories_l0,
                             categories_l1=categories_l1,
-                            create_viz=create_viz and create_hier_overlay
+                            create_viz=create_viz and create_hier_overlay,
+                            target_size=target_size
                         )
                         total_images += imgs
                         total_l0_annotations += l0_count
@@ -1470,7 +1494,8 @@ def process_hierarchical_combined_maps(
                                     viz_dir=viz_dir,
                                     categories_l0=categories_l0,
                                     categories_l1=categories_l1,
-                                    create_viz=create_viz and create_hier_overlay
+                                    create_viz=create_viz and create_hier_overlay,
+                                    target_size=target_size
                                 )
                                 total_images += imgs
                                 total_l0_annotations += l0_count
@@ -1499,7 +1524,8 @@ def process_hierarchical_combined_maps(
                                     viz_dir=viz_dir,
                                     categories_l0=categories_l0,
                                     categories_l1=categories_l1,
-                                    create_viz=create_viz and create_hier_overlay
+                                    create_viz=create_viz and create_hier_overlay,
+                                    target_size=target_size
                                 )
                                 total_images += imgs
                                 total_l0_annotations += l0_count

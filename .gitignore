@@ -17,3 +17,8 @@ venv/
 # IDE
 .vscode/
 .idea/
+us_mapdata
+yolo_us_hierarchical
+Test_data
+ne_10m_admin_2_counties
+ne_10m_admin_1_states_provinces

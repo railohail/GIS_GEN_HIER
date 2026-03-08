@@ -2,14 +2,19 @@
 Hierarchical annotation utilities for H-DETR dataset generation.
 
 This module handles:
-- Loading and managing the Taiwan administrative hierarchy (county → township)
+- Loading and managing administrative hierarchies (Taiwan or US)
 - Mapping between shapefile IDs and class IDs for both levels
 - Parent-child relationship lookups
 - Hierarchical YOLO annotation writing
 
-Hierarchy levels:
-- Level 0 (L0): County (縣市) - 22 classes
-- Level 1 (L1): Township (鄉鎮區) - 368 classes
+Supported Regions:
+- Taiwan:
+  - Level 0 (L0): County (縣市) - 22 classes
+  - Level 1 (L1): Township (鄉鎮區) - 368 classes
+
+- United States:
+  - Level 0 (L0): State - 50 classes
+  - Level 1 (L1): County - ~3,200 classes
 """
 
 import json
@@ -29,23 +34,51 @@ class HierarchyLevel:
     name_column: str
     parent_id_column: Optional[str] = None  # Only for L1+
 
+    # Filter options (for US data - filter states by iso_a2='US')
+    filter_column: Optional[str] = None
+    filter_value: Optional[str] = None
+
+    # For L1: column containing state abbreviation for filtering
+    state_abbrev_column: Optional[str] = None
+
     # Loaded data (populated by load())
     gdf: Optional[gpd.GeoDataFrame] = field(default=None, repr=False)
     id_to_class: Dict[str, int] = field(default_factory=dict)
     class_to_id: Dict[int, str] = field(default_factory=dict)
     id_to_name: Dict[str, str] = field(default_factory=dict)
 
-    def load(self) -> bool:
-        """Load the shapefile and build ID mappings."""
+    def load(self, state_filter: Optional[List[str]] = None) -> bool:
+        """
+        Load the shapefile and build ID mappings.
+
+        Args:
+            state_filter: Optional list of state abbreviations to filter L1 data
+                         (e.g., ['AL', 'CA'] for Alabama and California counties)
+        """
         if not os.path.exists(self.shapefile_path):
             print(f"ERROR: Shapefile not found: {self.shapefile_path}")
             return False
 
         self.gdf = gpd.read_file(self.shapefile_path)
 
+        # Apply filter if specified (e.g., filter to US states only)
+        if self.filter_column and self.filter_value:
+            original_count = len(self.gdf)
+            self.gdf = self.gdf[self.gdf[self.filter_column] == self.filter_value].copy()
+            print(f"  Filtered {self.name}: {original_count} -> {len(self.gdf)} (by {self.filter_column}={self.filter_value})")
+
+        # Apply state filter for L1 (counties)
+        if state_filter and self.state_abbrev_column:
+            original_count = len(self.gdf)
+            self.gdf = self.gdf[self.gdf[self.state_abbrev_column].isin(state_filter)].copy()
+            print(f"  Filtered {self.name} to states {state_filter}: {original_count} -> {len(self.gdf)}")
+
+        # Reset index after filtering
+        self.gdf = self.gdf.reset_index(drop=True)
+
         # Build mappings
         for idx, row in self.gdf.iterrows():
-            entity_id = row[self.id_column]
+            entity_id = str(row[self.id_column])
             entity_name = row[self.name_column]
             class_id = idx  # Use row index as class ID
 
@@ -73,13 +106,21 @@ class HierarchyManager:
     """
     Manages the administrative hierarchy for hierarchical dataset generation.
 
+    Supports both Taiwan and US administrative hierarchies:
+    - Taiwan: County (L0) → Township (L1)
+    - US: State (L0) → County (L1)
+
     Usage:
         manager = HierarchyManager()
         manager.load_from_config(config)
 
         # Get class IDs
-        county_class = manager.get_county_class_id('A')  # 臺北市
-        township_class = manager.get_township_class_id('A01')  # 中正區
+        county_class = manager.get_county_class_id('A')  # Taiwan: 臺北市
+        township_class = manager.get_township_class_id('A01')  # Taiwan: 中正區
+
+        # For US:
+        state_class = manager.get_county_class_id('AL')  # Alabama
+        county_class = manager.get_township_class_id('01001')  # Autauga County
 
         # Get parent relationship
         parent_county_id = manager.get_parent_county_id('A01')  # Returns 'A'
@@ -87,13 +128,19 @@ class HierarchyManager:
     """
 
     def __init__(self):
-        self.county_level: Optional[HierarchyLevel] = None
-        self.township_level: Optional[HierarchyLevel] = None
+        self.county_level: Optional[HierarchyLevel] = None  # L0: county (TW) or state (US)
+        self.township_level: Optional[HierarchyLevel] = None  # L1: township (TW) or county (US)
         self.hierarchy_data: Dict[str, Any] = {}
         self.loaded = False
 
+        # Region type: 'taiwan' or 'us'
+        self.region_type: str = 'taiwan'
+
         # Township → County parent mapping
         self.township_to_parent: Dict[str, str] = {}  # township_id → county_id
+
+        # For US: state abbreviation to postal code mapping
+        self.state_abbrev_to_id: Dict[str, str] = {}
 
     def load_from_config(self, config: Dict[str, Any]) -> bool:
         """
@@ -111,7 +158,28 @@ class HierarchyManager:
             print("Hierarchical mode disabled in config")
             return False
 
-        # Load Level 0 (County)
+        # Determine region type
+        self.region_type = hierarchy_config.get('region_type', 'taiwan')
+        print(f"Loading hierarchy for region: {self.region_type.upper()}")
+
+        # Get districts to determine state filter for US
+        districts = config.get('districts', [])
+        state_filter = None
+
+        if self.region_type == 'us' and districts:
+            # Convert district names to state abbreviations for filtering
+            from .core.us_constants import STATE_NAME_TO_POSTAL
+            state_filter = []
+            for district in districts:
+                # District name should match state name (e.g., "Alabama")
+                postal = STATE_NAME_TO_POSTAL.get(district)
+                if postal:
+                    state_filter.append(postal)
+                else:
+                    print(f"  Warning: Unknown state '{district}'")
+            print(f"  State filter: {state_filter}")
+
+        # Load Level 0 (County for Taiwan, State for US)
         l0_config = hierarchy_config.get('level_0', {})
         self.county_level = HierarchyLevel(
             name=l0_config.get('name', 'county'),
@@ -119,12 +187,36 @@ class HierarchyManager:
             shapefile_path=l0_config.get('shapefile', ''),
             id_column=l0_config.get('id_column', 'COUNTYID'),
             name_column=l0_config.get('name_column', 'COUNTYNAME'),
+            filter_column=l0_config.get('filter_column'),
+            filter_value=l0_config.get('filter_value'),
         )
 
         if not self.county_level.load():
             return False
 
-        # Load Level 1 (Township)
+        # For US, filter L0 to only requested states
+        if self.region_type == 'us' and state_filter:
+            id_col = self.county_level.id_column
+            original_count = len(self.county_level.gdf)
+            self.county_level.gdf = self.county_level.gdf[
+                self.county_level.gdf[id_col].isin(state_filter)
+            ].reset_index(drop=True)
+
+            # Rebuild mappings after filter
+            self.county_level.id_to_class.clear()
+            self.county_level.class_to_id.clear()
+            self.county_level.id_to_name.clear()
+
+            for idx, row in self.county_level.gdf.iterrows():
+                entity_id = str(row[id_col])
+                entity_name = row[self.county_level.name_column]
+                self.county_level.id_to_class[entity_id] = idx
+                self.county_level.class_to_id[idx] = entity_id
+                self.county_level.id_to_name[entity_id] = entity_name
+
+            print(f"  Filtered L0 to {state_filter}: {original_count} -> {len(self.county_level.gdf)}")
+
+        # Load Level 1 (Township for Taiwan, County for US)
         l1_config = hierarchy_config.get('level_1', {})
         self.township_level = HierarchyLevel(
             name=l1_config.get('name', 'township'),
@@ -133,9 +225,10 @@ class HierarchyManager:
             id_column=l1_config.get('id_column', 'TOWNID'),
             name_column=l1_config.get('name_column', 'TOWNNAME'),
             parent_id_column=l1_config.get('parent_id_column', 'COUNTYID'),
+            state_abbrev_column=l1_config.get('state_abbrev_column'),
         )
 
-        if not self.township_level.load():
+        if not self.township_level.load(state_filter=state_filter):
             return False
 
         # Build parent-child mappings
@@ -159,12 +252,47 @@ class HierarchyManager:
         parent_col = self.township_level.parent_id_column
         id_col = self.township_level.id_column
 
-        for _, row in self.township_level.gdf.iterrows():
-            township_id = row[id_col]
-            parent_id = row[parent_col]
-            self.township_to_parent[township_id] = parent_id
+        # For US data, we need to map REGION_COD (state FIPS) to state postal code
+        # The counties use REGION_COD (e.g., "01") and states use postal (e.g., "AL")
+        if self.region_type == 'us':
+            # Build FIPS to postal mapping from states
+            fips_to_postal = {}
+            if self.county_level.gdf is not None:
+                for _, row in self.county_level.gdf.iterrows():
+                    postal = str(row[self.county_level.id_column])
+                    # Get FIPS from the fips column (e.g., "US01" -> "01")
+                    fips = row.get('fips', '')
+                    if fips and fips.startswith('US'):
+                        fips = fips[2:]  # Remove "US" prefix
+                    if fips:
+                        fips_to_postal[fips] = postal
 
-        print(f"Built parent mappings for {len(self.township_to_parent)} townships")
+            # Also use state_abbrev_column if available
+            state_abbrev_col = self.township_level.state_abbrev_column
+
+            for _, row in self.township_level.gdf.iterrows():
+                township_id = str(row[id_col])
+
+                # Try state_abbrev_column first (REGION = "AL")
+                if state_abbrev_col and state_abbrev_col in row.index:
+                    parent_id = str(row[state_abbrev_col])
+                elif parent_col and parent_col in row.index:
+                    # parent_col might be REGION_COD (FIPS "01")
+                    parent_fips = str(row[parent_col])
+                    parent_id = fips_to_postal.get(parent_fips, parent_fips)
+                else:
+                    parent_id = None
+
+                if parent_id:
+                    self.township_to_parent[township_id] = parent_id
+        else:
+            # Taiwan: direct mapping
+            for _, row in self.township_level.gdf.iterrows():
+                township_id = str(row[id_col])
+                parent_id = str(row[parent_col])
+                self.township_to_parent[township_id] = parent_id
+
+        print(f"Built parent mappings for {len(self.township_to_parent)} {self.township_level.name}s")
 
     def get_county_class_id(self, county_id: str) -> Optional[int]:
         """Get class ID for a county."""
@@ -448,59 +576,89 @@ class HierarchyManager:
         return selected
 
     def create_county_categories(self) -> List[Dict[str, Any]]:
-        """Create COCO-style categories for counties with English names."""
-        if not self.county_level or not self.county_level.gdf is not None:
+        """Create COCO-style categories for L0 (counties/states) with English names."""
+        if not self.county_level or self.county_level.gdf is None:
             return []
 
         # Build English name lookup from hierarchy_data
         english_names = {}
-        if self.hierarchy_data and 'counties' in self.hierarchy_data:
-            for county_code, county_info in self.hierarchy_data['counties'].items():
-                # Map by code (COUNTYID prefix) or direct match
-                english_names[county_code] = county_info.get('english', '')
+
+        if self.region_type == 'us':
+            # US: Look up from 'states' key in hierarchy_data
+            if self.hierarchy_data and 'states' in self.hierarchy_data:
+                for state_code, state_info in self.hierarchy_data['states'].items():
+                    english_names[state_code] = state_info.get('english', state_info.get('name', ''))
+        else:
+            # Taiwan: Look up from 'counties' key
+            if self.hierarchy_data and 'counties' in self.hierarchy_data:
+                for county_code, county_info in self.hierarchy_data['counties'].items():
+                    english_names[county_code] = county_info.get('english', '')
 
         categories = []
         for class_id, entity_id in self.county_level.class_to_id.items():
-            chinese_name = self.county_level.id_to_name.get(entity_id, f"county_{class_id}")
+            name = self.county_level.id_to_name.get(entity_id, f"{self.county_level.name}_{class_id}")
 
-            # Try to find English name: first char of entity_id is usually the county code
-            county_code = entity_id[0] if entity_id else ''
-            english_name = english_names.get(county_code, f"County_{class_id}")
+            if self.region_type == 'us':
+                # US: entity_id is postal code (e.g., "AL")
+                english_name = english_names.get(entity_id, name)
+                supercategory = 'state'
+            else:
+                # Taiwan: first char of entity_id is usually the county code
+                county_code = entity_id[0] if entity_id else ''
+                english_name = english_names.get(county_code, f"County_{class_id}")
+                supercategory = 'county'
 
             categories.append({
                 'id': class_id,
-                'name': chinese_name,
+                'name': name,
                 'english': english_name,
-                'supercategory': 'county',
+                'supercategory': supercategory,
                 'entity_id': entity_id,
             })
         return sorted(categories, key=lambda x: x['id'])
 
     def create_township_categories(self) -> List[Dict[str, Any]]:
-        """Create COCO-style categories for townships with English names."""
+        """Create COCO-style categories for L1 (townships/counties) with English names."""
         if not self.township_level or self.township_level.gdf is None:
             return []
 
         # Build English name lookup from hierarchy_data
         english_names = {}
-        if self.hierarchy_data and 'townships' in self.hierarchy_data:
-            for town_id, town_info in self.hierarchy_data['townships'].items():
-                english_names[town_id] = town_info.get('english', '')
+
+        if self.region_type == 'us':
+            # US: Look up from 'counties' key in hierarchy_data
+            if self.hierarchy_data and 'counties' in self.hierarchy_data:
+                for county_id, county_info in self.hierarchy_data['counties'].items():
+                    # Map by FIPS code
+                    fips = county_info.get('fips', '')
+                    if fips:
+                        english_names[fips] = county_info.get('english', county_info.get('name', ''))
+        else:
+            # Taiwan: Look up from 'townships' key
+            if self.hierarchy_data and 'townships' in self.hierarchy_data:
+                for town_id, town_info in self.hierarchy_data['townships'].items():
+                    english_names[town_id] = town_info.get('english', '')
 
         categories = []
         for class_id, entity_id in self.township_level.class_to_id.items():
-            chinese_name = self.township_level.id_to_name.get(entity_id, f"township_{class_id}")
+            name = self.township_level.id_to_name.get(entity_id, f"{self.township_level.name}_{class_id}")
             parent_id = self.get_parent_county_id(entity_id)
             parent_class = self.get_parent_county_class(entity_id)
 
-            # Get English name, fallback to transliterated or ID-based
-            english_name = english_names.get(entity_id, f"T{class_id}")
+            if self.region_type == 'us':
+                # US: entity_id is FIPS code, name is already in English
+                english_name = english_names.get(entity_id, name)
+                supercategory = 'county'
+            else:
+                # Taiwan: entity_id is township code
+                english_name = english_names.get(entity_id, f"T{class_id}")
+                supercategory = 'township'
 
             categories.append({
                 'id': class_id,
-                'name': chinese_name,
+                'name': name,
                 'english': english_name,
-                'supercategory': 'township',
+                'supercategory': supercategory,
                 'entity_id': entity_id,
                 'parent_id': parent_id,
                 'parent_class': parent_class,

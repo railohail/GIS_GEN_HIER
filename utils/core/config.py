@@ -230,6 +230,13 @@ class HierarchyLevelConfig(DictAccessMixin):
     name_column: str = ""
     parent_id_column: Optional[str] = None
 
+    # Filter options (for US data - filter states by iso_a2='US')
+    filter_column: Optional[str] = None
+    filter_value: Optional[str] = None
+
+    # For L1: column containing state abbreviation for filtering
+    state_abbrev_column: Optional[str] = None
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> 'HierarchyLevelConfig':
         """Create from dictionary."""
@@ -239,7 +246,10 @@ class HierarchyLevelConfig(DictAccessMixin):
             num_classes=data.get('num_classes', 0),
             id_column=data.get('id_column', ''),
             name_column=data.get('name_column', ''),
-            parent_id_column=data.get('parent_id_column')
+            parent_id_column=data.get('parent_id_column'),
+            filter_column=data.get('filter_column'),
+            filter_value=data.get('filter_value'),
+            state_abbrev_column=data.get('state_abbrev_column'),
         )
 
 
@@ -248,6 +258,7 @@ class HierarchyConfig(DictAccessMixin):
     """Hierarchical annotation configuration for H-DETR."""
     enabled: bool = False
     noise_target: str = "county"  # 'county', 'township', or 'disabled'
+    region_type: str = "taiwan"  # 'taiwan' or 'us'
     level_0: HierarchyLevelConfig = field(default_factory=HierarchyLevelConfig)
     level_1: HierarchyLevelConfig = field(default_factory=HierarchyLevelConfig)
     hierarchy_file: str = ""
@@ -258,6 +269,7 @@ class HierarchyConfig(DictAccessMixin):
         return cls(
             enabled=data.get('enabled', False),
             noise_target=data.get('noise_target', 'county'),
+            region_type=data.get('region_type', 'taiwan'),
             level_0=HierarchyLevelConfig.from_dict(data.get('level_0', {})),
             level_1=HierarchyLevelConfig.from_dict(data.get('level_1', {})),
             hierarchy_file=data.get('hierarchy_file', '')

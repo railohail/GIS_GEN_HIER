@@ -1,0 +1,106 @@
+# Test Configuration for US Alabama State
+# Uses Test_data/States_map/Alabama/ TIF files with ne_10m_admin_2_counties shapefile
+
+crop_factor: 0.05
+
+# Districts are state names matching folder names in mapdata_base_dir
+districts:
+- Alabama
+
+# Output format
+output:
+  format: yolo
+  annotation_type: segmentation
+  grayscale: false
+
+  # Hierarchical mode for state/county levels
+  hierarchical: true
+
+  # Dataset split configuration
+  use_split: false  # Single output for testing
+  train_ratio: 1.0
+  val_ratio: 0.0
+  test_ratio: 0.0
+
+# Hierarchical annotation settings for US
+hierarchy:
+  enabled: true
+
+  # Region type for labeling
+  region_type: us  # 'taiwan' or 'us'
+
+  # Noise target for hierarchical mode
+  noise_target: county  # Noise fades from county borders
+
+  # Level 0: State (US states)
+  level_0:
+    name: state
+    shapefile: ne_10m_admin_1_states_provinces
+    num_classes: 50
+    id_column: postal        # WA, CA, AL, etc.
+    name_column: name        # Full state name
+    filter_column: iso_a2    # Filter to US only
+    filter_value: US
+
+  # Level 1: County (US counties)
+  level_1:
+    name: county
+    shapefile: ne_10m_admin_2_counties
+    num_classes: 3224        # Total US counties
+    id_column: CODE_LOCAL    # Full FIPS code (01001, 01003, etc.)
+    name_column: NAME        # County name
+    parent_id_column: REGION_COD  # Links to state via FIPS
+    state_abbrev_column: REGION   # State abbreviation for filtering
+
+  # Hierarchy mapping file
+  hierarchy_file: us_admin_hierarchy.json
+
+# Processing modes
+processing_modes:
+  separate_districts: true   # Process each state's map separately
+  combined_maps: false       # Disable for testing
+
+# Township/county dropout disabled for initial testing
+township_dropout:
+  enabled: false
+
+# Minimal augmentations for testing
+hue_augmentation:
+  enabled: false
+
+noise_configs:
+- name: clean
+  enabled: true
+  intensity: 0.0
+  type: gaussian
+  acceleration: 0
+  border_buffer_pixels: 0
+
+rotation:
+  enabled: false
+
+# No window configs for initial testing
+window_configs: []
+
+# Output directory
+output_base_dir: test_us_alabama
+
+# Processing settings - small batch for testing
+processing:
+  max_files_per_district: 2   # Only process 2 TIF files for testing
+  min_polygon_area: 100
+  skip_existing: false
+  mask_skip_threshold_separate: 50.0
+
+performance:
+  batch_size: 5
+
+# Data paths - US specific
+shapefile_path: ne_10m_admin_2_counties
+mapdata_base_dir: datasets/us_mapdata
+
+visualization:
+  create_masks: true
+  create_hierarchical_overlay: true
+  dpi: 150
+  save_noise_debug: false

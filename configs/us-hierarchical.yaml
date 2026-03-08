@@ -1,0 +1,159 @@
+# US Hierarchical Dataset Configuration
+# Generates State (L0) -> County (L1) annotations for US maps
+#
+# Available states with TIF files:
+#   Alabama, Alaska, Arizona, California, Florida, Georgia, Mississippi, Nevada
+
+crop_factor: 0.05
+
+# Districts are state names matching folder names in mapdata_base_dir
+districts:
+- Alabama
+- Alaska
+- Arizona
+- California
+- Florida
+- Georgia
+- Mississippi
+- Nevada
+
+# Output format
+output:
+  format: yolo
+  annotation_type: segmentation
+  grayscale: false
+  target_size: [800, 800]  # Fixed output size (width, height)
+
+  # Hierarchical mode for state/county levels
+  hierarchical: true
+
+  # Dataset split configuration
+  use_split: true
+  train_ratio: 0.8
+  val_ratio: 0.2
+  test_ratio: 0.0
+  split_seed: 42
+
+# Hierarchical annotation settings for US
+hierarchy:
+  enabled: true
+
+  # Region type for labeling
+  region_type: us  # 'taiwan' or 'us'
+
+  # Noise target for hierarchical mode
+  noise_target: county  # Noise fades from county borders
+
+  # Level 0: State (US states)
+  level_0:
+    name: state
+    shapefile: ne_10m_admin_1_states_provinces
+    num_classes: 50
+    id_column: postal        # WA, CA, AL, etc.
+    name_column: name        # Full state name
+    filter_column: iso_a2    # Filter to US only
+    filter_value: US
+
+  # Level 1: County (US counties)
+  level_1:
+    name: county
+    shapefile: ne_10m_admin_2_counties
+    num_classes: 3224        # Total US counties
+    id_column: CODE_LOCAL    # Full FIPS code (01001, 01003, etc.)
+    name_column: NAME        # County name
+    parent_id_column: REGION_COD  # Links to state via FIPS
+    state_abbrev_column: REGION   # State abbreviation for filtering
+
+  # Hierarchy mapping file
+  hierarchy_file: us_admin_hierarchy.json
+
+# Processing modes
+processing_modes:
+  separate_districts: true   # Process each state's map separately
+  combined_maps: true       # Can enable for multi-state windows
+
+# County dropout - simulate incomplete maps (like township_dropout for Taiwan)
+township_dropout:
+  enabled: false  # Enable for training data variety
+
+# Augmentations
+hue_augmentation:
+  enabled: true
+  count: 2
+  hue_shift_range: [-0.3, 0.3]
+  saturation_range: [0.8, 1.2]
+  value_range: [0.9, 1.1]
+
+noise_configs:
+- name: clean
+  enabled: true
+  intensity: 0.0
+  type: gaussian
+  acceleration: 0
+  border_buffer_pixels: 0
+- name: light
+  enabled: true
+  intensity: 0.3
+  type: gaussian
+  acceleration: 1.0
+  border_buffer_pixels: 12
+- name: medium
+  enabled: true
+  intensity: 0.5
+  type: gaussian
+  acceleration: 1.5
+  border_buffer_pixels: 8
+
+rotation:
+  enabled: true
+  count: 2
+  angle_range: [-30, 30]
+  interpolation: bilinear
+  fill_value: 0
+
+# No window configs (single state per image)
+window_configs:
+- name: xy_100
+  x_percent: 100
+  y_percent: 100
+- name: xy_95
+  x_percent: 95
+  y_percent: 95
+- name: xy_90
+  x_percent: 90
+  y_percent: 90
+- name: xy_80
+  x_percent: 80
+  y_percent: 80
+- name: xy_70
+  x_percent: 70
+  y_percent: 70
+- name: x_80_y_50
+  x_percent: 80
+  y_percent: 50
+- name: y_80_x_50
+  x_percent: 50
+  y_percent: 80
+
+# Output directory
+output_base_dir: yolo_us_hierarchical
+
+# Processing settings
+processing:
+  max_files_per_district: null  # Process all files (set to number for testing)
+  min_polygon_area: 100
+  skip_existing: false
+  mask_skip_threshold_separate: 50.0
+
+performance:
+  batch_size: 10
+
+# Data paths - US specific
+shapefile_path: ne_10m_admin_2_counties
+mapdata_base_dir: datasets/us_mapdata
+
+visualization:
+  create_masks: true
+  create_hierarchical_overlay: true
+  dpi: 200
+  save_noise_debug: false

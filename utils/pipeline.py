@@ -149,7 +149,7 @@ def _load_and_preprocess_raster(
 
     # Preprocess raster
     raster_data = raster.read()
-    image_data = preprocess_raster(raster_data)
+    image_data = preprocess_raster(raster_data, rasterio_src=raster)
     if image_data is None:
         raster.close()
         return None
@@ -323,7 +323,7 @@ def process_separate_districts(
 
                 # Preprocess raster
                 raster_data = raster.read()
-                image_data = preprocess_raster(raster_data)
+                image_data = preprocess_raster(raster_data, rasterio_src=raster)
                 if image_data is None:
                     raster.close()
                     continue
@@ -554,7 +554,7 @@ def process_combined_maps(
 
             # Preprocess raster
             raster_data = raster.read()
-            image_data = preprocess_raster(raster_data)
+            image_data = preprocess_raster(raster_data, rasterio_src=raster)
             if image_data is None:
                 raster.close()
                 continue
